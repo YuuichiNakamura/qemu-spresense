@@ -231,6 +231,12 @@ config STELLARIS
     select STELLARIS_ENET # ethernet
     select UNIMP
 
+config CXD56
+    bool
+    select ARM_V7M
+    select PL011 # UART
+    select UNIMP
+
 config STRONGARM
     bool
     select PXA2XX
