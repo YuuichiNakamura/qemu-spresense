@@ -1,10 +1,6 @@
 /*
  * CXD56XX
  *
- * Copyright (c) 2006 CodeSourcery.
- * Written by Paul Brook
- *
- * This code is licensed under the GPL.
  */
 
 #include "qemu/osdep.h"
@@ -31,6 +27,136 @@
 
 #define NUM_IRQ_LINES 128
 
+/***************/
+
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_topreg_state;
+
+static uint64_t cxd56_topreg_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    switch (offset) {
+    case 0x058c:
+        return 0x48040000;
+    }
+
+    fprintf(stderr,
+                  "TOPREG: read at bad offset 0x%x\n", (int)offset);
+    return 0;
+}
+
+static void cxd56_topreg_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    fprintf(stderr,
+                  "TOPREG: write at bad offset 0x%x\n", (int)offset);
+}
+
+static const MemoryRegionOps cxd56_topreg_ops = {
+    .read = cxd56_topreg_read,
+    .write = cxd56_topreg_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_topreg_sub_state;
+
+static uint64_t cxd56_topreg_sub_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    switch (offset) {
+    case 0x0418:
+        return 0x00000101;
+    }
+
+    fprintf(stderr,
+                  "TOPREG_SUB: read at bad offset 0x%x\n", (int)offset);
+    return 0;
+}
+
+static void cxd56_topreg_sub_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    fprintf(stderr,
+                  "TOPREG_SUB: write at bad offset 0x%x\n", (int)offset);
+}
+
+static const MemoryRegionOps cxd56_topreg_sub_ops = {
+    .read = cxd56_topreg_sub_read,
+    .write = cxd56_topreg_sub_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_bkup_sram_state;
+
+static uint64_t cxd56_bkup_sram_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    switch (offset) {
+    case 0x000c:
+        return 0x2020450f;
+    }
+
+    fprintf(stderr,
+                  "BKUP_SRAM: read at bad offset 0x%x\n", (int)offset);
+    return 0;
+}
+
+static void cxd56_bkup_sram_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    fprintf(stderr,
+                  "BKUP_SRAM: write at bad offset 0x%x\n", (int)offset);
+}
+
+static const MemoryRegionOps cxd56_bkup_sram_ops = {
+    .read = cxd56_bkup_sram_read,
+    .write = cxd56_bkup_sram_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_crg_state;
+
+static uint64_t cxd56_crg_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    switch (offset) {
+    case 0x0000:
+        return 0x00010001;
+    }
+
+    fprintf(stderr,
+                  "CRG: read at bad offset 0x%x\n", (int)offset);
+    return 0;
+}
+
+static void cxd56_crg_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    fprintf(stderr,
+                  "CRG: write at bad offset 0x%x\n", (int)offset);
+}
+
+static const MemoryRegionOps cxd56_crg_ops = {
+    .read = cxd56_crg_read,
+    .write = cxd56_crg_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
 static
 void do_sys_reset(void *opaque, int n, int level)
 {
@@ -39,42 +165,10 @@ void do_sys_reset(void *opaque, int n, int level)
     }
 }
 
+/***************/
+
 static void cxd56_init(MachineState *ms)
 {
-    /* Memory map of SoC devices, from
-     * cxd56 LM3S6965 Microcontroller Data Sheet (rev I)
-     * http://www.ti.com/lit/ds/symlink/lm3s6965.pdf
-     *
-     * 40000000 wdtimer
-     * 40002000 i2c (unimplemented)
-     * 40004000 GPIO
-     * 40005000 GPIO
-     * 40006000 GPIO
-     * 40007000 GPIO
-     * 40008000 SSI
-     * 4000c000 UART
-     * 4000d000 UART
-     * 4000e000 UART
-     * 40020000 i2c
-     * 40021000 i2c (unimplemented)
-     * 40024000 GPIO
-     * 40025000 GPIO
-     * 40026000 GPIO
-     * 40028000 PWM (unimplemented)
-     * 4002c000 QEI (unimplemented)
-     * 4002d000 QEI (unimplemented)
-     * 40030000 gptimer
-     * 40031000 gptimer
-     * 40032000 gptimer
-     * 40033000 gptimer
-     * 40038000 ADC
-     * 4003c000 analogue comparator (unimplemented)
-     * 40048000 ethernet
-     * 400fc000 hibernation module (unimplemented)
-     * 400fd000 flash memory control (unimplemented)
-     * 400fe000 system control
-     */
-
     DeviceState *nvic;
 
     MemoryRegion *sram = g_new(MemoryRegion, 1);
@@ -108,17 +202,36 @@ static void cxd56_init(MachineState *ms)
 
     pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
 
+
+    {
+    cxd56_topreg_state *topreg;
+    cxd56_topreg_sub_state *topreg_sub;
+    cxd56_crg_state *crg;
+    cxd56_bkup_sram_state *bkup_sram;
+
+    topreg = g_new0(cxd56_topreg_state, 1);
+    memory_region_init_io(&topreg->iomem, NULL, &cxd56_topreg_ops, topreg, "topreg", 0x3000);
+    memory_region_add_subregion(get_system_memory(), 0x04100000, &topreg->iomem);
+    topreg_sub = g_new0(cxd56_topreg_sub_state, 1);
+    memory_region_init_io(&topreg_sub->iomem, NULL, &cxd56_topreg_sub_ops, topreg_sub, "topreg_sub", 0x3000);
+    memory_region_add_subregion(get_system_memory(), 0x04103000, &topreg_sub->iomem);
+
+    bkup_sram = g_new0(cxd56_bkup_sram_state, 1);
+    memory_region_init_io(&bkup_sram->iomem, NULL, &cxd56_bkup_sram_ops, bkup_sram, "bkup_sram", 0x10000);
+    memory_region_add_subregion(get_system_memory(), 0x04400000, &bkup_sram->iomem);
+
+    crg = g_new0(cxd56_crg_state, 1);
+    memory_region_init_io(&crg->iomem, NULL, &cxd56_crg_ops, crg, "crg", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0x4e011000, &crg->iomem);
+    }
+
     /* Add dummy regions for the devices we don't implement yet,
      * so guest accesses don't cause unlogged crashes.
      */
     create_unimplemented_device("i2c-0", 0x40002000, 0x1000);
     create_unimplemented_device("i2c-2", 0x40021000, 0x1000);
-    create_unimplemented_device("PWM", 0x40028000, 0x1000);
-    create_unimplemented_device("QEI-0", 0x4002c000, 0x1000);
-    create_unimplemented_device("QEI-1", 0x4002d000, 0x1000);
-    create_unimplemented_device("analogue-comparator", 0x4003c000, 0x1000);
-    create_unimplemented_device("hibernation", 0x400fc000, 0x1000);
-    create_unimplemented_device("flash-control", 0x400fd000, 0x1000);
+
+    system_clock_scale = NANOSECONDS_PER_SECOND / 160000000;
 
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0x00180000);
 }
