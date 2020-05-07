@@ -6,11 +6,8 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/sysbus.h"
-#include "hw/ssi/ssi.h"
 #include "hw/arm/boot.h"
 #include "qemu/timer.h"
-#include "hw/i2c/i2c.h"
-#include "net/net.h"
 #include "hw/boards.h"
 #include "qemu/log.h"
 #include "exec/address-spaces.h"
@@ -19,10 +16,10 @@
 #include "hw/arm/armv7m.h"
 #include "hw/char/pl011.h"
 #include "hw/irq.h"
-#include "hw/watchdog/cmsdk-apb-watchdog.h"
-#include "migration/vmstate.h"
+#include "hw/loader.h"
 #include "hw/misc/unimp.h"
 #include "cpu.h"
+#include "target/arm/arm-powerctl.h"
 
 
 #define NUM_IRQ_LINES 128
@@ -145,6 +142,21 @@ static uint64_t cxd56_crg_read(void *opaque, hwaddr offset,
 static void cxd56_crg_write(void *opaque, hwaddr offset,
                            uint64_t value, unsigned size)
 {
+    switch (offset) {
+    case 0x0030:
+        fprintf(stderr, "CRG: reset 0x%x\n", (int)value);
+        if (value != 0) {
+            fprintf(stderr, "CRG: boot cpu 1\n");
+            arm_set_cpu_on_and_reset(1);
+        }
+
+        return;
+
+    case 0x0040:
+        fprintf(stderr, "CRG: ck_gate_ahb 0x%x\n", (int)value);
+        return;
+    }
+
     fprintf(stderr,
                   "CRG: write at bad offset 0x%x\n", (int)offset);
 }
@@ -157,6 +169,51 @@ static const MemoryRegionOps cxd56_crg_ops = {
 
 /***************/
 
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_cpuid_state;
+
+static uint64_t cxd56_cpuid_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    return current_cpu->cpu_index + 2;
+}
+
+static const MemoryRegionOps cxd56_cpuid_ops = {
+    .read = cxd56_cpuid_read,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+typedef struct {
+    MemoryRegion iomem;
+} cxd56_swint_state;
+
+static qemu_irq cxd56_swint[8];
+
+static void cxd56_swint_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    int cpu = (offset / 4) - 2;
+    if (value) {
+        qemu_irq_raise(cxd56_swint[cpu]);
+    } else {
+        qemu_irq_lower(cxd56_swint[cpu]);
+    }
+#if 0
+    fprintf(stderr,
+                  "swint: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
+#endif
+}
+
+static const MemoryRegionOps cxd56_swint_ops = {
+    .write = cxd56_swint_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+#if 0
 static
 void do_sys_reset(void *opaque, int n, int level)
 {
@@ -164,50 +221,17 @@ void do_sys_reset(void *opaque, int n, int level)
         qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
     }
 }
-
+#endif
 /***************/
 
-static void cxd56_init(MachineState *ms)
+static void cxd56_devices(void)
 {
-    DeviceState *nvic;
-
-    MemoryRegion *sram = g_new(MemoryRegion, 1);
-    MemoryRegion *flash = g_new(MemoryRegion, 1);
-    MemoryRegion *system_memory = get_system_memory();
-
-#if 0
-    memory_region_init_rom(flash, NULL, "cxd56.flash", 65536,
-                           &error_fatal);
-    memory_region_add_subregion(system_memory, 0, flash);
-#endif
-
-    memory_region_init_ram(sram, NULL, "cxd56.sram", 0x00180000,
-                           &error_fatal);
-    memory_region_add_subregion(system_memory, 0x0d000000, sram);
-
-    memory_region_init_alias(flash, NULL, "cxd56.flash", sram, 0, 0x00180000);
-    memory_region_add_subregion(system_memory, 0x00000000, flash);
-
-    nvic = qdev_create(NULL, TYPE_ARMV7M);
-    qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
-    qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
-    qdev_prop_set_bit(nvic, "enable-bitband", false);
-    object_property_set_link(OBJECT(nvic), OBJECT(get_system_memory()),
-                                     "memory", &error_abort);
-    /* This will exit with an error if the user passed us a bad cpu_type */
-    qdev_init_nofail(nvic);
-
-    qdev_connect_gpio_out_named(nvic, "SYSRESETREQ", 0,
-                                qemu_allocate_irq(&do_sys_reset, NULL, 0));
-
-    pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
-
-
-    {
     cxd56_topreg_state *topreg;
     cxd56_topreg_sub_state *topreg_sub;
-    cxd56_crg_state *crg;
     cxd56_bkup_sram_state *bkup_sram;
+    cxd56_crg_state *crg;
+    cxd56_cpuid_state *cpuid;
+    cxd56_swint_state *swint;
 
     topreg = g_new0(cxd56_topreg_state, 1);
     memory_region_init_io(&topreg->iomem, NULL, &cxd56_topreg_ops, topreg, "topreg", 0x3000);
@@ -223,13 +247,103 @@ static void cxd56_init(MachineState *ms)
     crg = g_new0(cxd56_crg_state, 1);
     memory_region_init_io(&crg->iomem, NULL, &cxd56_crg_ops, crg, "crg", 0x1000);
     memory_region_add_subregion(get_system_memory(), 0x4e011000, &crg->iomem);
-    }
 
+    cpuid = g_new0(cxd56_cpuid_state, 1);
+    memory_region_init_io(&cpuid->iomem, NULL, &cxd56_cpuid_ops, crg, "cpuid", 4);
+    memory_region_add_subregion(get_system_memory(), 0x0e002040, &cpuid->iomem);
+
+    swint = g_new0(cxd56_swint_state, 1);
+    memory_region_init_io(&swint->iomem, NULL, &cxd56_swint_ops, swint, "swint", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0x4600c000, &swint->iomem);
+#if 0
     /* Add dummy regions for the devices we don't implement yet,
      * so guest accesses don't cause unlogged crashes.
      */
-    create_unimplemented_device("i2c-0", 0x40002000, 0x1000);
-    create_unimplemented_device("i2c-2", 0x40021000, 0x1000);
+    create_unimplemented_device("cxd56.pmu_sub", 0x04106000, 0x1000);
+    create_unimplemented_device("cxd56.freqdisc", 0x04107000, 0x1000);
+    create_unimplemented_device("cxd56.spiflash", 0x04110000, 0x1000);
+    create_unimplemented_device("cxd56.dmac", 0x04120000, 0x4000);
+#endif
+}
+
+static void cxd56_init(MachineState *ms)
+{
+    DeviceState *nvic = NULL;
+    MemoryRegion *sram = g_new(MemoryRegion, 1);
+    MemoryRegion *flash = g_new(MemoryRegion, 1);
+    MemoryRegion *system_memory = get_system_memory();
+    int n;
+    unsigned int smp_cpus = ms->smp.cpus;
+
+#if 0
+    memory_region_init_rom(flash, NULL, "cxd56.flash", 65536,
+                           &error_fatal);
+    memory_region_add_subregion(system_memory, 0, flash);
+
+    /* Tiny boot loader */
+    static uint16_t code[] = {
+        0x0000, 0x0d00,         /* vector: initial SP */
+        0x0009, 0x0000,         /* vector: initial PC */
+        0x2000,                 /* movs   r0, #0 */
+        0x6801,                 /* ldr    r1, [r0, #0] */
+        0x6808,                 /* ldr    r0, [r1, #0] */
+        0x4685,                 /* mov    sp, r0 */
+        0x6848,                 /* ldr    r0, [r1, #4] */
+        0x4687                  /* mov    pc, r0 */
+    };
+    rom_add_blob_fixed("cxd56.flash", code, sizeof(code), 0x00000000);
+
+    memory_region_init_ram(sram, NULL, "cxd56.sram", 0x00180000,
+                           &error_fatal);
+    memory_region_add_subregion(system_memory, 0x0d000000, sram);
+
+    for (n = 0; n < smp_cpus; n++) {
+#if 0
+        Object *cpuobj = object_new(ms->cpu_type);
+        object_property_set_link(cpuobj, OBJECT(system_memory), "memory",
+                                &error_abort);
+        object_property_set_bool(cpuobj, true, "realized", &error_abort);
+
+
+#if 0
+#define NAME_SIZE 20
+        char name[NAME_SIZE];
+        snprintf(name, NAME_SIZE, "cpu%d", i);
+        object_initialize_child(obj, name, &s->cpu[i], sizeof(s->cpu[i]),
+                                ARM_CPU_TYPE_NAME("cortex-a9"),
+                                &error_abort, NULL);
+//
+        Object *cpuobj = object_new(ms->cpu_type);
+        object_property_set_bool(cpuobj, true, "realized", &error_fatal);
+//        cpu_irq[n] = qdev_get_gpio_in(DEVICE(cpuobj), ARM_CPU_IRQ);
+#endif
+#else
+        nvic = qdev_create(NULL, TYPE_ARMV7M);
+        qdev_prop_set_uint32(nvic, "cpunum", n);
+        qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
+        qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
+        qdev_prop_set_bit(nvic, "enable-bitband", false);
+        object_property_set_link(OBJECT(nvic), OBJECT(get_system_memory()),
+                                         "memory", &error_abort);
+        if (n > 0) {
+            object_property_set_bool(OBJECT(nvic), true,
+                                     "start-powered-off", &error_abort);
+        }
+
+        qdev_init_nofail(nvic);
+#if 0
+        qdev_connect_gpio_out_named(nvic, "SYSRESETREQ", 0,
+                                    qemu_allocate_irq(&do_sys_reset, NULL, 0));
+#endif
+#endif
+        cxd56_swint[n] = qdev_get_gpio_in(nvic, 96);
+        if (n == 0) {
+            pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
+        }
+    }
+
+//    pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
+    cxd56_devices();
 
     system_clock_scale = NANOSECONDS_PER_SECOND / 160000000;
 
@@ -247,6 +361,7 @@ static void spresense_class_init(ObjectClass *oc, void *data)
 
     mc->desc = "SPRESENSE";
     mc->init = spresense_init;
+    mc->max_cpus = 6;
     mc->ignore_memory_transaction_failures = true;
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-m4");
 }
