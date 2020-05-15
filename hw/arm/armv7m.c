@@ -153,12 +153,9 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
     Error *err = NULL;
     int i;
 
-    if (!s->board_memory) {
-        error_setg(errp, "memory property was not set");
-        return;
+    if (s->board_memory) {
+        memory_region_add_subregion_overlap(&s->container, 0, s->board_memory, -1);
     }
-
-    memory_region_add_subregion_overlap(&s->container, 0, s->board_memory, -1);
 
     s->cpu = ARM_CPU(object_new_with_props(s->cpu_type, OBJECT(s), "cpu",
                                            &err, NULL));
@@ -167,8 +164,13 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
         return;
     }
 
-    object_property_set_link(OBJECT(s->cpu), "memory", OBJECT(&s->container),
+    if (s->board_memory) {
+        object_property_set_link(OBJECT(s->cpu), "memory", OBJECT(&s->container),
                              &error_abort);
+    } else {
+        object_property_set_link(OBJECT(s->cpu), "memory", OBJECT(get_system_memory()),
+                             &error_abort);
+    }
     if (object_property_find(OBJECT(s->cpu), "idau", NULL)) {
         object_property_set_link(OBJECT(s->cpu), "idau", s->idau,
                                  &error_abort);
@@ -225,8 +227,10 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
     sysbus_connect_irq(sbd, 0,
                        qdev_get_gpio_in(DEVICE(s->cpu), ARM_CPU_IRQ));
 
-    memory_region_add_subregion(&s->container, 0xe000e000,
+    if (s->board_memory) {
+        memory_region_add_subregion(&s->container, 0xe000e000,
                                 sysbus_mmio_get_region(sbd, 0));
+    }
 
     for (i = 0; i < ARRAY_SIZE(s->bitband); i++) {
         if (s->enable_bitband) {
