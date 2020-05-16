@@ -366,6 +366,7 @@ static void cxd56_init(MachineState *ms)
 
     for (n = 0; n < smp_cpus; n++) {
         nvic = qdev_create(NULL, TYPE_ARMV7M);
+        qdev_prop_set_uint32(nvic, "cpunum", n);
         qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
         qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
         qdev_prop_set_bit(nvic, "enable-bitband", false);

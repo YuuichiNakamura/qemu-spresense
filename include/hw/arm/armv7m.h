@@ -77,6 +77,7 @@ struct ARMv7MState {
     bool start_powered_off;
     bool vfp;
     bool dsp;
+    uint32_t cpunum;
 };
 
 #endif

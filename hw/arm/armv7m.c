@@ -230,6 +230,9 @@ static void armv7m_realize(DeviceState *dev, Error **errp)
     if (s->board_memory) {
         memory_region_add_subregion(&s->container, 0xe000e000,
                                 sysbus_mmio_get_region(sbd, 0));
+    } else {
+        memory_region_add_subregion(get_system_memory(), 0xf000e000 + 0x00010000 * s->cpunum,
+                                sysbus_mmio_get_region(sbd, 0));
     }
 
     for (i = 0; i < ARRAY_SIZE(s->bitband); i++) {
@@ -266,6 +269,7 @@ static Property armv7m_properties[] = {
                      false),
     DEFINE_PROP_BOOL("vfp", ARMv7MState, vfp, true),
     DEFINE_PROP_BOOL("dsp", ARMv7MState, dsp, true),
+    DEFINE_PROP_UINT32("cpunum", ARMv7MState, cpunum, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
