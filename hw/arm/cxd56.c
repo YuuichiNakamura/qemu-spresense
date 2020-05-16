@@ -31,6 +31,7 @@ typedef struct {
     MemoryRegion crg;
     MemoryRegion cpuid;
     MemoryRegion swint;
+    MemoryRegion cpufifo;
     MemoryRegion nvic_sysreg;
     MemoryRegion nvic_systick;
 
@@ -38,6 +39,8 @@ typedef struct {
     MemoryRegion *real_nvic_sysreg[8];
     MemoryRegion *real_nvic_systick[8];
 
+    qemu_irq cpufifo_from_irq;
+    uint32_t cpufifo_wrd0;
 } cxd56_device_state;
 
 /***************/
@@ -102,7 +105,9 @@ static uint64_t cxd56_bkup_sram_read(void *opaque, hwaddr offset,
                               unsigned size)
 {
     switch (offset) {
-    case 0x000c:
+    case 0x0000:        /* rcosc_clock */
+        return 0x007e5000;
+    case 0x000c:        /* sysfw_version */
         return 0x2020450f;
     }
 
@@ -132,6 +137,9 @@ static uint64_t cxd56_crg_read(void *opaque, hwaddr offset,
     switch (offset) {
     case 0x0000:
         return 0x00010001;
+    case 0x0030:
+    case 0x0040:
+        return 0;
     }
 
     fprintf(stderr,
@@ -144,7 +152,7 @@ static void cxd56_crg_write(void *opaque, hwaddr offset,
 {
     switch (offset) {
     case 0x0030:
-        fprintf(stderr, "CRG: reset 0x%x\n", (int)value);
+//        fprintf(stderr, "CRG: reset 0x%x\n", (int)value);
         if (value != 0) {
             int cpu;
             for (cpu = 1; cpu < 6; cpu++) {
@@ -154,11 +162,10 @@ static void cxd56_crg_write(void *opaque, hwaddr offset,
                 }
             }
         }
-
         return;
 
     case 0x0040:
-        fprintf(stderr, "CRG: ck_gate_ahb 0x%x\n", (int)value);
+//        fprintf(stderr, "CRG: ck_gate_ahb 0x%x\n", (int)value);
         return;
     }
 
@@ -202,6 +209,56 @@ static void cxd56_swint_write(void *opaque, hwaddr offset,
 
 static const MemoryRegionOps cxd56_swint_ops = {
     .write = cxd56_swint_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+static uint64_t cxd56_cpufifo_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+    uint64_t value = 0;
+
+    switch (offset) {
+    case 0x0014:
+        value = s->cpufifo_wrd0;
+        break;
+    }
+
+    fprintf(stderr,
+                  "cpufifo: read at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
+    return value;
+}
+
+static void cxd56_cpufifo_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+
+    switch (offset) {
+    case 0x0004:
+        s->cpufifo_wrd0 = value;
+        break;
+    case 0x000c:
+        switch (s->cpufifo_wrd0) {
+            case 0x01400101:
+                s->cpufifo_wrd0 = 0x03000007;
+            case 0x0a000001:
+                fprintf(stderr, "raise\n");
+                qemu_irq_pulse(s->cpufifo_from_irq);
+                break;
+        }
+        break;
+    }
+
+    fprintf(stderr,
+                  "cpufifo: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
+}
+
+static const MemoryRegionOps cxd56_cpufifo_ops = {
+    .read = cxd56_cpufifo_read,
+    .write = cxd56_cpufifo_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
@@ -269,8 +326,11 @@ static void cxd56_devices(cxd56_device_state *s)
     memory_region_init_io(&s->cpuid, NULL, &cxd56_cpuid_ops, s, "cpuid", 4);
     memory_region_add_subregion(get_system_memory(), 0x0e002040, &s->cpuid);
 
-    memory_region_init_io(&s->swint, NULL, &cxd56_swint_ops, s, "swint", 0x1000);
+    memory_region_init_io(&s->swint, NULL, &cxd56_swint_ops, s, "swint", 0x0400);
     memory_region_add_subregion(get_system_memory(), 0x4600c000, &s->swint);
+
+    memory_region_init_io(&s->cpufifo, NULL, &cxd56_cpufifo_ops, s, "cpufifo", 0x0400);
+    memory_region_add_subregion(get_system_memory(), 0x4600c400, &s->cpufifo);
 
     memory_region_init_io(&s->nvic_sysreg, NULL, &cxd56_nvic_sysreg_ops, s, "nvic_sysreg", 0x1000);
     memory_region_add_subregion(get_system_memory(), 0xe000e000, &s->nvic_sysreg);
@@ -343,6 +403,7 @@ static void cxd56_init(MachineState *ms)
         s->swint_irq[n] = qdev_get_gpio_in(nvic, 96);
 
         if (n == 0) {
+            s->cpufifo_from_irq = qdev_get_gpio_in(nvic, 79);
             pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
         }
     }
