@@ -24,11 +24,23 @@
 
 #define NUM_IRQ_LINES 128
 
-/***************/
-
 typedef struct {
-    MemoryRegion iomem;
-} cxd56_topreg_state;
+    MemoryRegion topreg;
+    MemoryRegion topreg_sub;
+    MemoryRegion bkup_sram;
+    MemoryRegion crg;
+    MemoryRegion cpuid;
+    MemoryRegion swint;
+    MemoryRegion nvic_sysreg;
+    MemoryRegion nvic_systick;
+
+    qemu_irq swint_irq[8];
+    MemoryRegion *real_nvic_sysreg[8];
+    MemoryRegion *real_nvic_systick[8];
+
+} cxd56_device_state;
+
+/***************/
 
 static uint64_t cxd56_topreg_read(void *opaque, hwaddr offset,
                               unsigned size)
@@ -58,10 +70,6 @@ static const MemoryRegionOps cxd56_topreg_ops = {
 
 /***************/
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_topreg_sub_state;
-
 static uint64_t cxd56_topreg_sub_read(void *opaque, hwaddr offset,
                               unsigned size)
 {
@@ -90,10 +98,6 @@ static const MemoryRegionOps cxd56_topreg_sub_ops = {
 
 /***************/
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_bkup_sram_state;
-
 static uint64_t cxd56_bkup_sram_read(void *opaque, hwaddr offset,
                               unsigned size)
 {
@@ -121,10 +125,6 @@ static const MemoryRegionOps cxd56_bkup_sram_ops = {
 };
 
 /***************/
-
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_crg_state;
 
 static uint64_t cxd56_crg_read(void *opaque, hwaddr offset,
                               unsigned size)
@@ -174,10 +174,6 @@ static const MemoryRegionOps cxd56_crg_ops = {
 
 /***************/
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_cpuid_state;
-
 static uint64_t cxd56_cpuid_read(void *opaque, hwaddr offset,
                               unsigned size)
 {
@@ -191,17 +187,13 @@ static const MemoryRegionOps cxd56_cpuid_ops = {
 
 /***************/
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_swint_state;
-
-static qemu_irq cxd56_swint[8];
-
 static void cxd56_swint_write(void *opaque, hwaddr offset,
                            uint64_t value, unsigned size)
 {
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+
     int cpu = (offset / 4) - 2;
-    qemu_set_irq(cxd56_swint[cpu], value);
+    qemu_set_irq(s->swint_irq[cpu], value);
 #if 0
     fprintf(stderr,
                   "swint: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
@@ -215,24 +207,20 @@ static const MemoryRegionOps cxd56_swint_ops = {
 
 /***************/
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_nvic_sysreg_state;
-
-static MemoryRegion *cxd56_nvic_sysreg[8];
-
 static MemTxResult cxd56_nvic_sysreg_write(void *opaque, hwaddr addr,
                                     uint64_t value, unsigned size,
                                     MemTxAttrs attrs)
 {
-    return memory_region_dispatch_write(cxd56_nvic_sysreg[current_cpu->cpu_index], addr, value, size_memop(size) | MO_TE, attrs);
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+    return memory_region_dispatch_write(s->real_nvic_sysreg[current_cpu->cpu_index], addr, value, size_memop(size) | MO_TE, attrs);
 }
 
 static MemTxResult cxd56_nvic_sysreg_read(void *opaque, hwaddr addr,
                                    uint64_t *data, unsigned size,
                                    MemTxAttrs attrs)
 {
-    return memory_region_dispatch_read(cxd56_nvic_sysreg[current_cpu->cpu_index], addr, data, size_memop(size) | MO_TE, attrs);
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+    return memory_region_dispatch_read(s->real_nvic_sysreg[current_cpu->cpu_index], addr, data, size_memop(size) | MO_TE, attrs);
 }
 
 static const MemoryRegionOps cxd56_nvic_sysreg_ops = {
@@ -241,24 +229,20 @@ static const MemoryRegionOps cxd56_nvic_sysreg_ops = {
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
-typedef struct {
-    MemoryRegion iomem;
-} cxd56_nvic_systick_state;
-
-static MemoryRegion *cxd56_nvic_systick[8];
-
 static MemTxResult cxd56_nvic_systick_write(void *opaque, hwaddr addr,
                                     uint64_t value, unsigned size,
                                     MemTxAttrs attrs)
 {
-    return memory_region_dispatch_write(cxd56_nvic_systick[current_cpu->cpu_index], addr, value, size_memop(size) | MO_TE, attrs);
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+    return memory_region_dispatch_write(s->real_nvic_systick[current_cpu->cpu_index], addr, value, size_memop(size) | MO_TE, attrs);
 }
 
 static MemTxResult cxd56_nvic_systick_read(void *opaque, hwaddr addr,
                                    uint64_t *data, unsigned size,
                                    MemTxAttrs attrs)
 {
-    return memory_region_dispatch_read(cxd56_nvic_systick[current_cpu->cpu_index], addr, data, size_memop(size) | MO_TE, attrs);
+    cxd56_device_state *s = (cxd56_device_state *)opaque;
+    return memory_region_dispatch_read(s->real_nvic_systick[current_cpu->cpu_index], addr, data, size_memop(size) | MO_TE, attrs);
 }
 
 static const MemoryRegionOps cxd56_nvic_systick_ops = {
@@ -268,57 +252,31 @@ static const MemoryRegionOps cxd56_nvic_systick_ops = {
 };
 
 /***************/
-#if 0
-static
-void do_sys_reset(void *opaque, int n, int level)
+
+static void cxd56_devices(cxd56_device_state *s)
 {
-    if (level) {
-        qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-    }
-}
-#endif
-/***************/
+    memory_region_init_io(&s->topreg, NULL, &cxd56_topreg_ops, s, "topreg", 0x3000);
+    memory_region_add_subregion(get_system_memory(), 0x04100000, &s->topreg);
+    memory_region_init_io(&s->topreg_sub, NULL, &cxd56_topreg_sub_ops, s, "topreg_sub", 0x3000);
+    memory_region_add_subregion(get_system_memory(), 0x04103000, &s->topreg_sub);
 
-static void cxd56_devices(void)
-{
-    cxd56_topreg_state *topreg;
-    cxd56_topreg_sub_state *topreg_sub;
-    cxd56_bkup_sram_state *bkup_sram;
-    cxd56_crg_state *crg;
-    cxd56_cpuid_state *cpuid;
-    cxd56_swint_state *swint;
-    cxd56_nvic_sysreg_state *nvic_sysreg;
-    cxd56_nvic_systick_state *nvic_systick;
+    memory_region_init_io(&s->bkup_sram, NULL, &cxd56_bkup_sram_ops, s, "bkup_sram", 0x10000);
+    memory_region_add_subregion(get_system_memory(), 0x04400000, &s->bkup_sram);
 
-    topreg = g_new0(cxd56_topreg_state, 1);
-    memory_region_init_io(&topreg->iomem, NULL, &cxd56_topreg_ops, topreg, "topreg", 0x3000);
-    memory_region_add_subregion(get_system_memory(), 0x04100000, &topreg->iomem);
-    topreg_sub = g_new0(cxd56_topreg_sub_state, 1);
-    memory_region_init_io(&topreg_sub->iomem, NULL, &cxd56_topreg_sub_ops, topreg_sub, "topreg_sub", 0x3000);
-    memory_region_add_subregion(get_system_memory(), 0x04103000, &topreg_sub->iomem);
+    memory_region_init_io(&s->crg, NULL, &cxd56_crg_ops, s, "crg", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0x4e011000, &s->crg);
 
-    bkup_sram = g_new0(cxd56_bkup_sram_state, 1);
-    memory_region_init_io(&bkup_sram->iomem, NULL, &cxd56_bkup_sram_ops, bkup_sram, "bkup_sram", 0x10000);
-    memory_region_add_subregion(get_system_memory(), 0x04400000, &bkup_sram->iomem);
+    memory_region_init_io(&s->cpuid, NULL, &cxd56_cpuid_ops, s, "cpuid", 4);
+    memory_region_add_subregion(get_system_memory(), 0x0e002040, &s->cpuid);
 
-    crg = g_new0(cxd56_crg_state, 1);
-    memory_region_init_io(&crg->iomem, NULL, &cxd56_crg_ops, crg, "crg", 0x1000);
-    memory_region_add_subregion(get_system_memory(), 0x4e011000, &crg->iomem);
+    memory_region_init_io(&s->swint, NULL, &cxd56_swint_ops, s, "swint", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0x4600c000, &s->swint);
 
-    cpuid = g_new0(cxd56_cpuid_state, 1);
-    memory_region_init_io(&cpuid->iomem, NULL, &cxd56_cpuid_ops, crg, "cpuid", 4);
-    memory_region_add_subregion(get_system_memory(), 0x0e002040, &cpuid->iomem);
+    memory_region_init_io(&s->nvic_sysreg, NULL, &cxd56_nvic_sysreg_ops, s, "nvic_sysreg", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0xe000e000, &s->nvic_sysreg);
+    memory_region_init_io(&s->nvic_systick, NULL, &cxd56_nvic_systick_ops, s, "nvic_systick", 0xe0);
+    memory_region_add_subregion_overlap(get_system_memory(), 0xe000e010, &s->nvic_systick, 1);
 
-    swint = g_new0(cxd56_swint_state, 1);
-    memory_region_init_io(&swint->iomem, NULL, &cxd56_swint_ops, swint, "swint", 0x1000);
-    memory_region_add_subregion(get_system_memory(), 0x4600c000, &swint->iomem);
-
-    nvic_sysreg = g_new0(cxd56_nvic_sysreg_state, 1);
-    memory_region_init_io(&nvic_sysreg->iomem, NULL, &cxd56_nvic_sysreg_ops, nvic_sysreg, "nvic_sysreg", 0x1000);
-    memory_region_add_subregion(get_system_memory(), 0xe000e000, &nvic_sysreg->iomem);
-    nvic_systick = g_new0(cxd56_nvic_systick_state, 1);
-    memory_region_init_io(&nvic_systick->iomem, NULL, &cxd56_nvic_systick_ops, nvic_systick, "nvic_systick", 0xe0);
-    memory_region_add_subregion_overlap(get_system_memory(), 0xe000e010, &nvic_systick->iomem, 1);
 #if 0
     /* Add dummy regions for the devices we don't implement yet,
      * so guest accesses don't cause unlogged crashes.
@@ -333,6 +291,7 @@ static void cxd56_devices(void)
 static void cxd56_init(MachineState *ms)
 {
     DeviceState *nvic = NULL;
+    cxd56_device_state *s = g_new(cxd56_device_state, 1);
     MemoryRegion *sram = g_new(MemoryRegion, 1);
     MemoryRegion *flash = g_new(MemoryRegion, 1);
     MemoryRegion *system_memory = get_system_memory();
@@ -364,6 +323,8 @@ static void cxd56_init(MachineState *ms)
                            &error_fatal);
     memory_region_add_subregion(system_memory, 0x0d000000, sram);
 
+    cxd56_devices(s);
+
     for (n = 0; n < smp_cpus; n++) {
         nvic = qdev_create(NULL, TYPE_ARMV7M);
         qdev_prop_set_uint32(nvic, "cpunum", n);
@@ -377,20 +338,14 @@ static void cxd56_init(MachineState *ms)
 
         qdev_init_nofail(nvic);
 
-        ARMv7MState *s = ARMV7M(nvic);
-        cxd56_nvic_sysreg[n] = &s->nvic.sysregmem;
-        cxd56_nvic_systick[n] = &s->nvic.systickmem;
-#if 0
-        qdev_connect_gpio_out_named(nvic, "SYSRESETREQ", 0,
-                                    qemu_allocate_irq(&do_sys_reset, NULL, 0));
-#endif
-        cxd56_swint[n] = qdev_get_gpio_in(nvic, 96);
+        s->real_nvic_sysreg[n] = &(ARMV7M(nvic)->nvic.sysregmem);
+        s->real_nvic_systick[n] = &(ARMV7M(nvic)->nvic.systickmem);
+        s->swint_irq[n] = qdev_get_gpio_in(nvic, 96);
+
         if (n == 0) {
             pl011_create(0x041ac000, qdev_get_gpio_in(nvic, 11), serial_hd(0));
         }
     }
-
-    cxd56_devices();
 
     system_clock_scale = NANOSECONDS_PER_SECOND / 160000000;
 
