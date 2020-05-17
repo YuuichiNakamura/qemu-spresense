@@ -358,6 +358,13 @@ static void cxd56_init(MachineState *ms)
     int n;
     unsigned int smp_cpus = ms->smp.cpus;
 
+    memory_region_init_ram(sram, NULL, "cxd56.sram", 0x00180000,
+                           &error_fatal);
+    memory_region_add_subregion(system_memory, 0x0d000000, sram);
+
+    memory_region_init_alias(flash, NULL, "cxd56.mirror", sram, 0, 0x10000);
+    memory_region_add_subregion(system_memory, 0, flash);
+    
 #if 0
     memory_region_init_rom(flash, NULL, "cxd56.flash", 65536,
                            &error_fatal);
@@ -378,10 +385,7 @@ static void cxd56_init(MachineState *ms)
         0x4687                  /* mov    pc, r0 */
     };
     rom_add_blob_fixed("cxd56.flash", code, sizeof(code), 0x00000000);
-
-    memory_region_init_ram(sram, NULL, "cxd56.sram", 0x00180000,
-                           &error_fatal);
-    memory_region_add_subregion(system_memory, 0x0d000000, sram);
+#endif
 
     cxd56_devices(s);
 
@@ -390,12 +394,10 @@ static void cxd56_init(MachineState *ms)
         qdev_prop_set_uint32(nvic, "cpunum", n);
         qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
         qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
-        qdev_prop_set_bit(nvic, "enable-bitband", false);
-        if (n > 0) {
-            object_property_set_bool(OBJECT(nvic), true,
-                                     "start-powered-off", &error_abort);
-        }
+        object_property_set_bool(OBJECT(nvic), true,
+                                 "start-powered-off", &error_abort);
 
+        /* CPU reset vector is loaded here. CPU0 must reload the vector again after loading kernel. */
         qdev_init_nofail(nvic);
 
         s->real_nvic_sysreg[n] = &(ARMV7M(nvic)->nvic.sysregmem);
@@ -411,6 +413,7 @@ static void cxd56_init(MachineState *ms)
     system_clock_scale = NANOSECONDS_PER_SECOND / 160000000;
 
     armv7m_load_kernel(ARM_CPU(first_cpu), ms->kernel_filename, 0x00180000);
+    arm_set_cpu_on_and_reset(0);
 }
 
 static void spresense_init(MachineState *machine)
