@@ -21,12 +21,20 @@
 #include "cpu.h"
 #include "target/arm/arm-powerctl.h"
 
+//#define DEBUG
+
+#ifdef DEBUG
+#define REGERR(...)     fprintf(stderr, __VA_ARGS__)
+#else
+#define REGERR(...)
+#endif
 
 #define NUM_IRQ_LINES 128
 
 typedef struct {
     MemoryRegion topreg;
     MemoryRegion topreg_sub;
+    MemoryRegion scu;
     MemoryRegion bkup_sram;
     MemoryRegion crg;
     MemoryRegion cpuid;
@@ -49,20 +57,32 @@ static uint64_t cxd56_topreg_read(void *opaque, hwaddr offset,
                               unsigned size)
 {
     switch (offset) {
+    case 0x0044:
+        return 0x00000001;
+    case 0x04c4:
+        return 0xa0500500;
+    case 0x04f8:
+        return 0xffffffff;
     case 0x058c:
         return 0x48040000;
     }
 
-    fprintf(stderr,
-                  "TOPREG: read at bad offset 0x%x\n", (int)offset);
+    REGERR("TOPREG: read at bad offset 0x%x\n", (int)offset);
     return 0;
 }
 
 static void cxd56_topreg_write(void *opaque, hwaddr offset,
                            uint64_t value, unsigned size)
 {
-    fprintf(stderr,
-                  "TOPREG: write at bad offset 0x%x\n", (int)offset);
+    switch (offset) {
+    case 0x2168:
+    case 0x216c:
+    case 0x2170:
+    case 0x2174:
+        return; /* LED */
+    }
+
+    REGERR("TOPREG: write at bad offset 0x%x\n", (int)offset);
 }
 
 static const MemoryRegionOps cxd56_topreg_ops = {
@@ -79,23 +99,49 @@ static uint64_t cxd56_topreg_sub_read(void *opaque, hwaddr offset,
     switch (offset) {
     case 0x0418:
         return 0x00000101;
+    case 0x1490:
+        return 0x00000002;
     }
 
-    fprintf(stderr,
-                  "TOPREG_SUB: read at bad offset 0x%x\n", (int)offset);
+    REGERR("TOPREG_SUB: read at bad offset 0x%x\n", (int)offset);
     return 0;
 }
 
 static void cxd56_topreg_sub_write(void *opaque, hwaddr offset,
                            uint64_t value, unsigned size)
 {
-    fprintf(stderr,
-                  "TOPREG_SUB: write at bad offset 0x%x\n", (int)offset);
+    REGERR("TOPREG_SUB: write at bad offset 0x%x\n", (int)offset);
 }
 
 static const MemoryRegionOps cxd56_topreg_sub_ops = {
     .read = cxd56_topreg_sub_read,
     .write = cxd56_topreg_sub_write,
+    .endianness = DEVICE_NATIVE_ENDIAN,
+};
+
+/***************/
+
+static uint64_t cxd56_scu_read(void *opaque, hwaddr offset,
+                              unsigned size)
+{
+    switch (offset) {
+    case 0x0020:
+        return 0x00000003;
+    }
+
+    REGERR("scu: read at bad offset 0x%x\n", (int)offset);
+    return 0;
+}
+
+static void cxd56_scu_write(void *opaque, hwaddr offset,
+                           uint64_t value, unsigned size)
+{
+    REGERR("scu: write at bad offset 0x%x\n", (int)offset);
+}
+
+static const MemoryRegionOps cxd56_scu_ops = {
+    .read = cxd56_scu_read,
+    .write = cxd56_scu_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
 };
 
@@ -111,16 +157,14 @@ static uint64_t cxd56_bkup_sram_read(void *opaque, hwaddr offset,
         return 0x2020450f;
     }
 
-    fprintf(stderr,
-                  "BKUP_SRAM: read at bad offset 0x%x\n", (int)offset);
+    REGERR("BKUP_SRAM: read at bad offset 0x%x\n", (int)offset);
     return 0;
 }
 
 static void cxd56_bkup_sram_write(void *opaque, hwaddr offset,
                            uint64_t value, unsigned size)
 {
-    fprintf(stderr,
-                  "BKUP_SRAM: write at bad offset 0x%x\n", (int)offset);
+    REGERR("BKUP_SRAM: write at bad offset 0x%x\n", (int)offset);
 }
 
 static const MemoryRegionOps cxd56_bkup_sram_ops = {
@@ -142,8 +186,7 @@ static uint64_t cxd56_crg_read(void *opaque, hwaddr offset,
         return 0;
     }
 
-    fprintf(stderr,
-                  "CRG: read at bad offset 0x%x\n", (int)offset);
+    REGERR("CRG: read at bad offset 0x%x\n", (int)offset);
     return 0;
 }
 
@@ -152,12 +195,12 @@ static void cxd56_crg_write(void *opaque, hwaddr offset,
 {
     switch (offset) {
     case 0x0030:
-//        fprintf(stderr, "CRG: reset 0x%x\n", (int)value);
+//        REGERR("CRG: reset 0x%x\n", (int)value);
         if (value != 0) {
             int cpu;
             for (cpu = 1; cpu < 6; cpu++) {
                 if (value & (1 << (16 + cpu))) {
-                    fprintf(stderr, "CRG: boot cpu %d\n", cpu);
+                    REGERR("CRG: boot cpu %d\n", cpu);
                     arm_set_cpu_on_and_reset(cpu);
                 }
             }
@@ -165,12 +208,11 @@ static void cxd56_crg_write(void *opaque, hwaddr offset,
         return;
 
     case 0x0040:
-//        fprintf(stderr, "CRG: ck_gate_ahb 0x%x\n", (int)value);
+//        REGERR("CRG: ck_gate_ahb 0x%x\n", (int)value);
         return;
     }
 
-    fprintf(stderr,
-                  "CRG: write at bad offset 0x%x\n", (int)offset);
+    REGERR("CRG: write at bad offset 0x%x\n", (int)offset);
 }
 
 static const MemoryRegionOps cxd56_crg_ops = {
@@ -201,10 +243,7 @@ static void cxd56_swint_write(void *opaque, hwaddr offset,
 
     int cpu = (offset / 4) - 2;
     qemu_set_irq(s->swint_irq[cpu], value);
-#if 0
-    fprintf(stderr,
-                  "swint: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
-#endif
+//    REGERR("swint: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
 }
 
 static const MemoryRegionOps cxd56_swint_ops = {
@@ -226,8 +265,7 @@ static uint64_t cxd56_cpufifo_read(void *opaque, hwaddr offset,
         break;
     }
 
-    fprintf(stderr,
-                  "cpufifo: read at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
+    REGERR("cpufifo: read at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
     return value;
 }
 
@@ -245,15 +283,13 @@ static void cxd56_cpufifo_write(void *opaque, hwaddr offset,
             case 0x01400101:
                 s->cpufifo_wrd0 = 0x03000007;
             case 0x0a000001:
-                fprintf(stderr, "raise\n");
                 qemu_irq_pulse(s->cpufifo_from_irq);
                 break;
         }
         break;
     }
 
-    fprintf(stderr,
-                  "cpufifo: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
+    REGERR("cpufifo: write at bad offset 0x%x 0x%x\n", (int)offset, (int)value);
 }
 
 static const MemoryRegionOps cxd56_cpufifo_ops = {
@@ -316,6 +352,9 @@ static void cxd56_devices(cxd56_device_state *s)
     memory_region_add_subregion(get_system_memory(), 0x04100000, &s->topreg);
     memory_region_init_io(&s->topreg_sub, NULL, &cxd56_topreg_sub_ops, s, "topreg_sub", 0x3000);
     memory_region_add_subregion(get_system_memory(), 0x04103000, &s->topreg_sub);
+
+    memory_region_init_io(&s->scu, NULL, &cxd56_scu_ops, s, "scu", 0x1000);
+    memory_region_add_subregion(get_system_memory(), 0x04195000, &s->scu);
 
     memory_region_init_io(&s->bkup_sram, NULL, &cxd56_bkup_sram_ops, s, "bkup_sram", 0x10000);
     memory_region_add_subregion(get_system_memory(), 0x04400000, &s->bkup_sram);
