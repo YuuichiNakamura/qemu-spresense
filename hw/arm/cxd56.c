@@ -38,6 +38,7 @@ typedef struct {
     MemoryRegion bkup_sram;
     MemoryRegion crg;
     MemoryRegion cpuid;
+    MemoryRegion cpuid2;
     MemoryRegion swint;
     MemoryRegion cpufifo;
     MemoryRegion nvic_sysreg;
@@ -154,7 +155,8 @@ static uint64_t cxd56_bkup_sram_read(void *opaque, hwaddr offset,
     case 0x0000:        /* rcosc_clock */
         return 0x007e5000;
     case 0x000c:        /* sysfw_version */
-        return 0x2020450f;
+//        return 0x2020450f;
+        return 0x20204ea1;
     }
 
     REGERR("BKUP_SRAM: read at bad offset 0x%x\n", (int)offset);
@@ -364,6 +366,9 @@ static void cxd56_devices(cxd56_device_state *s)
 
     memory_region_init_io(&s->cpuid, NULL, &cxd56_cpuid_ops, s, "cpuid", 4);
     memory_region_add_subregion(get_system_memory(), 0x0e002040, &s->cpuid);
+
+    memory_region_init_alias(&s->cpuid2, NULL, "cpuid.mirror", &s->cpuid, 0, 4);
+    memory_region_add_subregion(get_system_memory(), 0x4e002040, &s->cpuid2);
 
     memory_region_init_io(&s->swint, NULL, &cxd56_swint_ops, s, "swint", 0x0400);
     memory_region_add_subregion(get_system_memory(), 0x4600c000, &s->swint);
