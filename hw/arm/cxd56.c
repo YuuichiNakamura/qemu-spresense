@@ -434,15 +434,15 @@ static void cxd56_init(MachineState *ms)
     cxd56_devices(s);
 
     for (n = 0; n < smp_cpus; n++) {
-        nvic = qdev_create(NULL, TYPE_ARMV7M);
+        nvic = qdev_new(TYPE_ARMV7M);
         qdev_prop_set_uint32(nvic, "cpunum", n);
         qdev_prop_set_uint32(nvic, "num-irq", NUM_IRQ_LINES);
         qdev_prop_set_string(nvic, "cpu-type", ms->cpu_type);
-        object_property_set_bool(OBJECT(nvic), true,
-                                 "start-powered-off", &error_abort);
+        object_property_set_bool(OBJECT(nvic), "start-powered-off",
+                                 true, &error_abort);
 
         /* CPU reset vector is loaded here. CPU0 must reload the vector again after loading kernel. */
-        qdev_init_nofail(nvic);
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(nvic), &error_fatal);
 
         s->real_nvic_sysreg[n] = &(ARMV7M(nvic)->nvic.sysregmem);
         s->real_nvic_systick[n] = &(ARMV7M(nvic)->nvic.systickmem);
